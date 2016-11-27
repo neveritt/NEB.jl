@@ -1,6 +1,6 @@
 function impulse(G,n)
   u = zeros(n)
-  u[1] = 1/G.Ts
+  u[1] = 1.0/G.Ts
   lsim(G, u)
 end
 

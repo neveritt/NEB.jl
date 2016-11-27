@@ -1,5 +1,5 @@
 
-function NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
+function NEB{T}(y::AbstractVector{T}, u::AbstractMatrix{T},
   r::AbstractMatrix{T}, n::Int, m::Int)
   nᵤ = size(u,2)
   λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R = _initial_NEB(y,u,r,n,m)
@@ -7,6 +7,7 @@ function NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   W  = vcat(R, Gₜ*R)
   @inbounds for iter in 1:50
     println(iter)
+    println(Θ)
     _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ)
   end
   return λᵥ, βᵥ, σᵥ, sᵥ, Θ, z
@@ -33,19 +34,23 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   Λ     = spdiagm(kron(λᵥ,ones(T,n)))
   # warning
   P, s  = _create_Ps(K*Λ, invΣₑ, W, z)
-  S  = P+s*s'
-  û  = R*s
+  S     = P+s*s'
+  û     = R*s
+  sᵥ[:] = s
 
   # θ optimimization
   b = _create_b(y, û, nᵤ, N)
-  A  = _create_A(R*S*R.', N)
+  #A  = _create_A(R*S*R.', N)
+  U,s,V = svd(S)
+  Uᵣ = R*U
+  Vᵣ = R*V
 
-  df = TwiceDifferentiableFunction(x -> Q₀(x, A, b, N, Ts))
+  df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, s, b, N, Ts))
   #options  = OptimizationOptions(autodiff = true, g_tol = 1e-14)
   opt = optimize(df, Θ, Newton(), OptimizationOptions(autodiff = true, g_tol = 1e-14))
 
   # update hyperparameters
-  Θ  = opt.minimum
+  Θ[:] = opt.minimum
   gₜ::Vector{T} = impulse(tf(vcat(zeros(T,1), Θ[1:m]), vcat(ones(T,1), Θ[m+1:2m]), Ts), N)
   Gₜ = Toeplitz(gₜ, N)
   W  = vcat(R, Gₜ*R)
@@ -74,7 +79,7 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   return nothing
 end
 
-function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
+function _initial_NEB{T}(y::AbstractVector{T}, u::AbstractMatrix{T},
   r::AbstractMatrix{T}, n::Int, m::Int)
   size(y,1) == size(u,1) == size(r,1) || throw(ArgumentError("Data length must be the same"))
   N,nᵤ = size(u)
@@ -138,7 +143,7 @@ function _create_b{T}(y::AbstractVector{T}, û::AbstractVector{T}, nᵤ::Int, N
   bᵥ = zeros(T,N*nᵤ)
   for i = 1:nᵤ
     idx  = (i-1)*N + (1:N)
-    bᵥ[idx] = Toeplitz(û[idx], N)*y
+    bᵥ[idx] = Toeplitz(û[idx], N).'*y
   end
   return bᵥ
 end
@@ -184,4 +189,19 @@ function Q₀{T}(Θ::AbstractVector{T}, A::AbstractMatrix{T},
   gₜ::Vector{T} = impulse(tf(vcat(zeros(1), b),vcat(ones(1), a),Ts),N)
 
   return dot(gₜ,A*gₜ) - 2*dot(bb,gₜ)
+end
+
+function Qₙ{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
+  s::AbstractVector{T},
+  bb::AbstractVector{T}, N::Int, Ts::Float64)
+  m::Int = round(length(Θ)/2)
+  b::Vector{T} = vcat(zeros(T,1), Θ[1:m])
+  a::Vector{T} = vcat(ones(T,1), Θ[m+1:end])
+  gₜ::Vector{T} = impulse(tf(b, a,Ts),N)
+
+  sumu = 0.0
+  for i in 1:length(s)
+    sumu += s[i]*sumabs2(filt(b,a,U[:,i]))
+  end
+  return sumu - 2*dot(bb,gₜ)
 end

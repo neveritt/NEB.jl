@@ -23,5 +23,6 @@ include("basicEB.jl")
 include("basicQmin.jl")
 include("impulse.jl")
 include("neb.jl")
+include("nebx.jl")
 
 end # module
