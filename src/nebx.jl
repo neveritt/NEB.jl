@@ -19,12 +19,12 @@ end
 
 
 function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
-  σₛ::AbstractVector{T}, sₛ::AbstractMatrix{T}, Θ::AbstractVector{T},
+  σₛ::AbstractVector{T}, sₛ::AbstractVector{T}, Θ::AbstractVector{T},
   zₛ::AbstractVector{T}, zₜ::AbstractVector{T},
   n::Int, m::Int, nᵤ::Int, nᵣ::Int, N::Int)
 
   nₛ = nᵤ*nᵣ
-  z  = vcat(zₛ[:],y2[:])
+  z  = vcat(zₛ[:],zₜ[:])
   σₜ = 0.01
   λₜ = 100.0
   βₜ = 0.94
@@ -34,15 +34,27 @@ function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
   Gₜ = Toeplitz(gₜ, N)
   û  = Gₜ*R*sₛ[:]
 
+#  y  = view(z, (nᵤ*N+1):(nᵤ+1)*N)
+#  λₜ, βₜ, σₜ, fₛ = basicEB(zₜ, y, n, λₜ, βₜ, σₜ)
   λₜ, βₜ, σₜ, fₛ = basicEB(zₜ, û, n, λₜ, βₜ, σₜ)
 
-  λᵥ = vcat(λₛ,[λₜ])
+  λᵥ = vcat(λₛ,[2*λₜ])
   βᵥ = vcat(βₛ,[βₜ])
-  σᵥ = vcat(σₛ,[σₜ])
+  σᵥ = vcat(σₛ,[2*σₜ])
   sₛ = sₛ[:]
+  println(λᵥ)
+  orders = [n, m, nᵤ, nᵣ, N]
+  nebx(λᵥ, βᵥ, σᵥ, sₛ, fₛ[:], Θ, z, orders)
+end
 
-  burnin = 300
-  nsteps = 700
+function nebx{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
+    σᵥ::AbstractVector{T}, sₛ::AbstractVector{T}, fₛ::AbstractVector{T},
+    Θ::AbstractVector{T}, z::AbstractVector{T},
+    orders::AbstractVector{Int})
+  n, m, nᵤ, nᵣ, N = orders
+  nₛ = nᵤ*nᵣ
+  burnin = 1000
+  nsteps = 3000
   M = burnin + nsteps
 
   Sₘ = zeros(TT, nₛ*n, nsteps)
@@ -57,6 +69,8 @@ function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
   λₜ = view(λᵥ, nₛ+1:nₛ+1)
   βₜ = view(βᵥ, nₛ+1:nₛ+1)
   σₜ = view(σᵥ, nᵤ+2:nᵤ+2)
+  y  = view(z, (nᵤ*N+1):(nᵤ+1)*N)
+  zₜ = view(z, ((nᵤ+1)*N+1):(nᵤ+2)*N)
   R  = _create_R(r, nᵤ, nᵣ, nₛ, n, N)
   R₂ = _create_R(r, nᵤ, nᵣ, nₛ, 2n-1, N)
 
@@ -66,7 +80,7 @@ function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
   W  = vcat(R, Gₜ*R, Xₜ*Gₜ*R)
 
   # every iteration
-  for iter in 1:10
+  for iter in 1:20
     println(iter)
 
     Kₛ    = _create_K(βₛ, n)
@@ -79,7 +93,7 @@ function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
     KΛₜ   = Kₜ*Λₜ
     invΣₜ = spdiagm(kron(1./σₜ.^2,ones(TT,N)))
 
-    for iₘ in 1:M
+    @time for iₘ in 1:M
       _NEB_gibbs!(z, zₜ, fₛ, sₛ, KΛₛ, invΣₛ, KΛₜ, invΣₜ, W, nᵤ,
       Gₜ, R, Sₘ, Fₘ, Vₘ, iₘ, burnin)
     end
@@ -98,17 +112,17 @@ function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
     uₛ = R*sₛ
     Fv = R₂*vₛ
 
-    Uc,st,V = svd(Cₛ)
-    Uₜ = R*Uc
+    Uc,ss,V = svd(Cₛ)
+    Uₛ = R*Uc
 
-    Uc,ss,V = svd(Cᵥ)
-    Uₛ = R₂*Uc
+    Uc,st,V = svd(Cᵥ)
+    Uₜ = R₂*Uc
 
     # update Θ
     #df = TwiceDifferentiableFunction(x -> Qₛ(
     #  x, zₜ[:], zₛ[N+1:2N], FV, U, σᵥ[3], σᵥ[2], Aₜ, Aₛ, N, Ts))
-    df = TwiceDifferentiableFunction(x -> Qₙ(x, zₜ[:], zₛ[N+1:2N], Fv, uₛ,
-      σᵥ[3], σᵥ[2], Uₜ, st, Uₛ, ss, N, 1.0))
+    df = TwiceDifferentiableFunction(x -> Qₙ(x, zₜ, y, Fv, uₛ,
+      σᵥ[nᵤ+2], σᵥ[nᵤ+1], Uₜ, st, Uₛ, ss, N, 1.0))
     options  = OptimizationOptions(autodiff = true, g_tol = 1e-32)
     opt = optimize(df, Θ, Newton(), options)
     Θ = opt.minimum
@@ -122,42 +136,46 @@ function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
 
     # update noise
     #σᵥ[:] = Eₘ/nsteps/N
-    gₜ = impulse(tf(vcat(zeros(1), Θ[1:m]),vcat(ones(1), Θ[m+1:2m]),Ts),N)
+    b  = vcat(zeros(T,1), Θ[1:m])
+    a  = vcat(ones(T,1), Θ[m+1:2m])
+    gₜ = impulse(tf(b,a,Ts),N)
     Gₜ = Toeplitz(gₜ, N)
     Xₜ = Toeplitz(vcat(fₛ[:],zeros(N-n)), N)
     W  = vcat(R, Gₜ*R, Xₜ*Gₜ*R)
-    MM1 = R₂*Cᵥ*R₂.'
-    MM2 = R*Cₛ*R.'
 
     Eᵢ = z-W*sₛ
     for i = 1:nᵤ
       idx    = (i-1)*N + (1:N)
       eᵢ     = view(Eᵢ,idx)
-      σᵥ[i]  = sqrt((sumabs2(eᵢ) + trace(MM1[idx,idx]))/N)
+      idxM   = (i-1)*nᵣ*n + (1:nᵣ*n)
+      U,sᵢ,V = svd(Cₛ[idxM,idxM])
+      Uₘ     = R[(i-1)*N+(1:N),idxM]*U  #    MM1 = R*Cₛ*R.'
+      σᵥ[i]  = sqrt((sumabs2(eᵢ) + _quad_cost(Uₘ,sᵢ))/N) # trace(MM1[idx,idx]
     end
-    σᵥ[nᵤ+1] = sqrt((sumabs2(Eᵢ[nᵤ*N+(1:N)]) + dot(gₜ.',_create_A(MM1,N)*gₜ))/N)
-    σᵥ[end]  = sqrt((sumabs2(Eᵢ[end-N+(1:N)]) + dot(gₜ.',_create_A(MM2,N)*gₜ))/N)
+    σᵥ[nᵤ+1] = sqrt((sumabs2(Eᵢ[nᵤ*N+(1:N)]) + _quad_cost(filt(b,a,Uₛ),ss))/N)
+    σᵥ[end]  = sqrt((sumabs2(Eᵢ[end-N+(1:N)]) + _quad_cost(filt(b,a,Uₜ),st))/N)
 
     println(Θ)
     println(σᵥ)
   end
-  return λᵥ, βᵥ, σᵥ, Θ
+  return λᵥ, βᵥ, σᵥ, sₛ, fₛ, Θ, z
+end
+
+function _quad_cost{T}(U::AbstractMatrix{T}, s::AbstractVector{T})
+  sum = zero(T)
+  for i in 1:length(s)
+    @inbounds sum += s[i]*sumabs2(U[:,i])
+  end
+  return sum
 end
 
 function Qₙ(Θ, zₜ, zₛ, Fv, v, σₜ, σₛ, Uₜ, sₜ, Uₛ, sₛ, N, Ts)
   m::Int = round(length(Θ)/2)
   b = vcat(zeros(1), Θ[1:m])
   a = vcat(ones(1), Θ[m+1:end])
-#  gₜ = impulse(tf(b,a,Ts),N)
-  #Gₜ = Toeplitz(gₜ,N)
-  sumt = 0.0
-  for i in 1:length(sₜ)
-    sumt += sₜ[i]*sumabs2(filt(b,a,Uₜ[:,i]))
-  end
-  sums = 0.0
-  for i in 1:length(sₛ)
-    sums += sₛ[i]*sumabs2(filt(b,a,Uₛ[:,i]))
-  end
+
+  sumt = _quad_cost(filt(b,a,Uₜ),sₜ)
+  sums = _quad_cost(filt(b,a,Uₛ),sₛ)
   return sumabs2(zₜ - filt(b,a,Fv))/σₜ^2 + sumabs2(zₛ - filt(b,a,v))/σₛ^2 +
     sumt/σₜ^2 + sums/σₛ^2
 end
