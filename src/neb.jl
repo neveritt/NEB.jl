@@ -8,10 +8,15 @@ immutable NEBstate{T} <: IdentificationState
   s::Matrix{T}
 end
 
-function NEB{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1)
+function neb{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1)
   y  = data.y[outputidx:outputidx,:]
   u  = data.y[setdiff(1:data.ny,outputidx),:]
   r  = data.u
+  neb(y,u,r,n,m)
+end
+
+function neb{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
+    n::Int, m::Int)
   nᵤ = size(u,1)
   nᵣ = size(r,1)
   nₛ = nᵤ*nᵣ
@@ -21,12 +26,7 @@ function NEB{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1)
 
   # save state
   NEBtrace = [NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))]
-  @inbounds for iter in 1:20
-    # println("iter", iter)
-    # println("Θ: ", Θ)
-    # println("σᵥ: ", σᵥ)
-    # println("λᵥ: ", λᵥ)
-    # println("βᵥ: ", βᵥ)
+  @inbounds for iter in 1:100
     _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ)
     state = NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))
     push!(NEBtrace,state)
@@ -63,14 +63,13 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   b = _create_b(y, û, nᵤ, N)
 #  A  = _create_A(R*S*R.', N, nᵤ)
   U,sv,V = svd(S)
-  sidx = length(sv) - length(filter(x-> x > 0.99*sum(sv), cumsum(sv))) + 1
+  sidx = min(10,length(sv)) #length(sv) - length(filter(x-> x > 0.99*sum(sv), cumsum(sv))) + 1
   sv = sv[1:sidx]
-  Uᵣ = R*U
-  Vᵣ = R*V
-  println("sidx: ", sidx)
+  Uᵣ = R*U[:,1:sidx]
+  Vᵣ = R*V[:,1:sidx]
 
-  df = TwiceDifferentiableFunction(x -> Q₀(x, A, b, N, Ts, m, nᵤ))
-#  df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, sv, b, N, Ts, m, nᵤ))
+#  df = TwiceDifferentiableFunction(x -> Q₀(x, A, b, N, Ts, m, nᵤ))
+  df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, sv, b, N, m, nᵤ))
   #options  = OptimizationOptions(autodiff = true, g_tol = 1e-14)
   opt = optimize(df, Θ, Newton(), Optim.Options(autodiff = true, g_tol = 1e-14))
 
@@ -283,9 +282,14 @@ function Q₀{T}(Θ::AbstractVector{T}, A::AbstractMatrix{T},
 end
 
 function Qₙ{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
-  s::AbstractVector{T},
-  bb::AbstractVector{T}, N::Int, Ts::Float64, m::Int, nᵤ::Int)
+  s::AbstractVector{T}, bb::AbstractVector{T}, N::Int, m::Int, nᵤ::Int)
 
+  sumu = _quad_cost(Θ, U, s, m, nᵤ)
+  gₜ   = _create_g(Θ, nᵤ, m, N)
+  return sumu - 2*dot(bb,gₜ)
+end
+
+function _quad_cost{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T}, s::AbstractVector{T}, m::Int, nᵤ::Int)
   b = Vector{Vector{T}}(nᵤ)
   a = Vector{Vector{T}}(nᵤ)
   for i in 0:nᵤ-1
@@ -293,16 +297,14 @@ function Qₙ{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
     b[i+1]  = vcat(zeros(T,1), Θᵢ[1:m])
     a[i+1]  = vcat(ones(T,1), Θᵢ[m+(1:m)])
   end
-  sumu = 0.0
+  sum = zero(T)
   for i in 1:length(s)
     vj = zeros(T,N)
     for j in 1:nᵤ
       idxj = (j-1)*N+(1:N)
       vj += filt(b[j], a[j], U[idxj,i])
     end
-    sumu += s[i]*sumabs2(vj)
+    sum += s[i]*sumabs2(vj)
   end
-
-  gₜ = _create_g(Θ, nᵤ, m, N)
-  return sumu - 2*dot(bb,gₜ)
+  return sum
 end
