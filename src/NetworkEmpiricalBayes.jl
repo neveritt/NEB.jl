@@ -10,13 +10,23 @@ module NetworkEmpiricalBayes
 using ControlCore
 using IdentificationToolbox, Compat
 using GeneralizedSchurAlgorithm
+using Polynomials
+using Distributions
 using PDMats
 using Optim
 import ToeplitzMatrices.Toeplitz
 
-function Toeplitz{T<:Real}(g::Vector{T}, N::Int)
-  Toeplitz(hcat(g), hcat(g[1], spzeros(T,1,N-1)))
+export  NEB,
+        nebx,
+        basicEB
+
+function Toeplitz{T<:Number}(g::Vector{T}, N::Int)
+  col = zeros(T,1,N)
+  col[1] = g[1]
+  Toeplitz(reshape(g,length(g),1), col)
 end
+
+typealias IdDataObject IdentificationToolbox.IdDataObject
 
 # include files
 include("basicEB.jl")

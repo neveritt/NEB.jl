@@ -1,28 +1,8 @@
-immutable EB <: IdentificationToolbox.OneStepIdMethod
-  maxiter::Int
-  tol::Float64
-
-  @compat function (::Type{EB})(maxiter::Int, tol::Float64)
-    new(maxiter,tol)
-  end
-end
-
-function EB(; maxiter::Int=1000, tol::Float64=1e-6)
-  EB(maxiter,tol)
-end
-
-function fitmodel{T<:Real}(data::IdDataObject{T}, n::Vector{Int}, method::FIR; kwargs...)
-  basicEB(data, n, method)
-end
-
-function basicEB{T}(data::IdDataObject{T}, n, method::EB=EB())
-  basicEB(data.y,data.u, n[1])
-end
-
 function basicEB{T}(z::AbstractArray{T},r::AbstractArray{T},
-  n::Int=100, λ=100.0, β=.94, σ=0.01; method::EB=EB())
-  maxiter = method.maxiter
-  tol     = method.tol
+  n::Int=100, λ=100.0, β=.94, σ=0.01;
+  maxiter::Int = 10, tol::Float64=1e-4)
+#  maxiter = method.maxiter
+#  tol     = method.tol
 
   N  = size(z,1)
   n  = n>N ? N : n
