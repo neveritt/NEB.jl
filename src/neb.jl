@@ -12,22 +12,22 @@ function neb{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1)
   y  = data.y[outputidx:outputidx,:]
   u  = data.y[setdiff(1:data.ny,outputidx),:]
   r  = data.u
-  neb(y,u,r,n,m)
+  neb(y,u,r,n,m,data.Ts)
 end
 
 function neb{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
-    n::Int, m::Int)
+    n::Int, m::Int, Ts::Float64)
   nᵤ = size(u,1)
   nᵣ = size(r,1)
   nₛ = nᵤ*nᵣ
-  λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R = _initial_NEB(y,u,r,n,m)
+  λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R = _initial_NEB(y,u,r,n,m,Ts)
   z  = vcat(vec(u.'),vec(y.'))
   W  = vcat(R, Gₜ*R)
 
   # save state
   NEBtrace = [NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))]
-  @inbounds for iter in 1:100
-    _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ)
+  @inbounds for iter in 1:40
+    _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ, Ts)
     state = NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))
     push!(NEBtrace,state)
   end
@@ -37,7 +37,8 @@ end
 
 function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   σᵥ::AbstractVector{T}, sᵥ::AbstractMatrix{T}, Θ::AbstractVector{T},
-  W::AbstractMatrix{T}, R::AbstractMatrix{T}, z::AbstractVector{T}, nᵤ::Int)
+  W::AbstractMatrix{T}, R::AbstractMatrix{T}, z::AbstractVector{T}, nᵤ::Int,
+  Ts::Float64)
 #  @assert eltype(R) == T throw(ArgumentError())
   Ts = 1.0
 
@@ -69,13 +70,13 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   Vᵣ = R*V[:,1:sidx]
 
 #  df = TwiceDifferentiableFunction(x -> Q₀(x, A, b, N, Ts, m, nᵤ))
-  df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, sv, b, N, m, nᵤ))
+  df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, sv, b, N, Ts, m, nᵤ))
   #options  = OptimizationOptions(autodiff = true, g_tol = 1e-14)
   opt = optimize(df, Θ, Newton(), Optim.Options(autodiff = true, g_tol = 1e-14))
 
   # update hyperparameters
   Θ[:]  = opt.minimizer
-  gₜ,Gₜ = _create_G(Θ, nᵤ, m, N)
+  gₜ,Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
   W  = vcat(R, Gₜ*R)
   ŷ  = Gₜ*R*sᵥ[:]
   P̂  = W*P*W'
@@ -103,7 +104,7 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
 end
 
 function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
-  r::AbstractMatrix{T}, n::Int, m::Int)
+  r::AbstractMatrix{T}, n::Int, m::Int, Ts::Float64)
   size(y,1) == 1 || throw(ArgumentError("_initial_NEB: only one output allowed"))
   size(y,2) == size(u,2) == size(r,2) || throw(ArgumentError("_initial_NEB: Data length must be the same"))
   nᵤ,N = size(u)
@@ -126,7 +127,7 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   # initialization for OE
   options = IdOptions(iterations = 20, autodiff=true, estimate_initial=false)
   model   = ARX(m,m,ones(Int,nᵤ),1,nᵤ)
-  zdata   = iddata(y, û, 1.0)
+  zdata   = iddata(y, û, Ts)
   s       = arx(zdata,model,options)
 
   Θ = zeros(2m*nᵤ)
@@ -146,7 +147,7 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
     Θ[(i-1)*2m+(1:2m)] = vcat(coeffs(B[i])[2:m+1], coeffs(F[i])[2:m+1])
   end
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
-  gₜ, Gₜ = _create_G(Θ, nᵤ, m, N)
+  gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
 
   z  = vcat(vec(u.'),vec(y.'))
   W  = vcat(R, Gₜ*R)
@@ -186,7 +187,7 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   return λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R
 end
 
-function _create_G{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, N::Int)
+function _create_G{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, Ts::Float64, N::Int)
   Gₜ = zeros(T,N,N*nᵤ)
   gₜ = zeros(T,N*nᵤ)
   for i in 0:nᵤ-1
@@ -197,7 +198,7 @@ function _create_G{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, N::Int)
   return gₜ, Gₜ
 end
 
-function _create_g{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, N::Int)
+function _create_g{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, Ts::Float64, N::Int)
   gₜ = zeros(T,N*nᵤ)
   for i in 0:nᵤ-1
     Θᵢ              = Θ[i*2m+(1:2m)]
@@ -276,20 +277,20 @@ end
 function Q₀{T}(Θ::AbstractVector{T}, A::AbstractMatrix{T},
   bb::AbstractVector{T}, N::Int, Ts::Float64, m::Int, nᵤ::Int)
   m::Int        = round(length(Θ)/2nᵤ)
-  gₜ::Vector{T} = _create_g(Θ, nᵤ, m, N)
+  gₜ::Vector{T} = _create_g(Θ, nᵤ, m, Ts, N)
 
   return dot(gₜ,A*gₜ) - 2*dot(bb,gₜ)
 end
 
 function Qₙ{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
-  s::AbstractVector{T}, bb::AbstractVector{T}, N::Int, m::Int, nᵤ::Int)
+  s::AbstractVector{T}, bb::AbstractVector{T}, N::Int, Ts::Float64, m::Int, nᵤ::Int)
 
-  sumu = _quad_cost(Θ, U, s, m, nᵤ)
-  gₜ   = _create_g(Θ, nᵤ, m, N)
+  sumu = _quad_cost(Θ, U, s, m, N, nᵤ)
+  gₜ   = _create_g(Θ, nᵤ, m, Ts, N)
   return sumu - 2*dot(bb,gₜ)
 end
 
-function _quad_cost{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T}, s::AbstractVector{T}, m::Int, nᵤ::Int)
+function _quad_cost{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T}, s::AbstractVector{T}, m::Int, N::Int, nᵤ::Int)
   b = Vector{Vector{T}}(nᵤ)
   a = Vector{Vector{T}}(nᵤ)
   for i in 0:nᵤ-1

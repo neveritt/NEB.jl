@@ -52,11 +52,11 @@ end
 # end
 
 function nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
-  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int})
+  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int}, Ts::Float64)
   n, m, nᵤ, nᵣ, N = orders
   nₛ = nᵤ*nᵣ
 
-  state, z  = _initial_nebx(y,u,r,zₜ,orders)
+  state, z  = _initial_nebx(y,u,r,zₜ,orders, Ts)
   nebxtrace = [state]
   Θ  = copy(state.Θ)
   σᵥ = copy(state.σ)
@@ -66,13 +66,14 @@ function nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   fₛ = copy(state.f)
 
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
-  gₜ, Gₜ = _create_G(Θ, nᵤ, m, N)
+  R₂     = _create_R(r.', nᵤ, nᵣ, nₛ, 2n-1, N)
+  gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
   Xₜ     = full(Toeplitz(vcat(fₛ, zeros(N-n)), N))
   W      = vcat(R, Gₜ*R, Xₜ*Gₜ*R)
   # every iteration
-  for iter in 1:40
+  for iter in 1:20
     println(iter)
-    _iter_nebx!(λᵥ, βᵥ, σᵥ, sᵥ, fₛ, Θ, W, R, z, orders)
+    _iter_nebx!(λᵥ, βᵥ, σᵥ, sᵥ, fₛ, Θ, W, R, R₂, z, orders, Ts)
     state = NEBXstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ), copy(fₛ))
     push!(nebxtrace, state)
   end
@@ -81,11 +82,11 @@ function nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
 end
 
 function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
-  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T},  orders::Vector{Int})
+  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T},  orders::Vector{Int}, Ts::Float64)
   n, m, nᵤ, nᵣ, N = orders
   nₛ = nᵤ*nᵣ
 
-  nebtrace, zₛ = neb(y,u,r,n,m)
+  nebtrace, zₛ = neb(y,u,r,n,m,Ts)
   Θ  = last(nebtrace).Θ
   σₛ = last(nebtrace).σ
   λₛ = last(nebtrace).λ
@@ -99,7 +100,7 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   βₜ = 0.94
 
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
-  gₜ, Gₜ = _create_G(Θ, nᵤ, m, N)
+  gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
   û      = Gₜ*R*sₛ[:]
 
   λₜ, βₜ, σₜ, fₛ = basicEB(zₜ[:], û, n, λₜ, βₜ, σₜ)
@@ -114,7 +115,8 @@ end
 function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
     σᵥ::AbstractVector{T}, sₛ::AbstractVector{T}, fₛ::AbstractVector{T},
     Θ::AbstractVector{T}, W::AbstractMatrix{T}, R::AbstractMatrix{T},
-    z::AbstractVector{T}, orders::AbstractVector{Int})
+    R₂::AbstractMatrix{T}, z::AbstractVector{T}, orders::AbstractVector{Int},
+    Ts::Float64)
   n,m,nᵤ,nᵣ,N = orders
   nₛ = nᵤ*nᵣ
 
@@ -129,12 +131,13 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   βₜ = view(βᵥ, nₛ+1:nₛ+1)
   σₜ = view(σᵥ, nᵤ+2:nᵤ+2)
 
-  burnin = 1000
-  nsteps = 2000
+  burnin = 500
+  nsteps = 1000
   M = burnin + nsteps
 
   Sₘ = zeros(T, nₛ*n, nsteps)
   Fₘ = zeros(T, n, nsteps)
+  Vₘ = zeros(T, nₛ*(2n-1), nsteps)
 
   Kₛ    = _create_K(βₛ, n)
   Λₛ    = spdiagm(kron(λₛ,ones(T,n)))
@@ -145,17 +148,22 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   Λₜ    = spdiagm(kron(λₜ,ones(T,n)))
   KΛₜ   = Kₜ*Λₜ
   invΣₜ = spdiagm(kron(1./σₜ,ones(T,N)))
-  gₜ, Gₜ = _create_G(Θ, nᵤ, m, N)
+  gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
 
   for iₘ in 1:M
-    _NEB_gibbs!(fₛ, sₛ, KΛₛ, invΣₛ, KΛₜ, invΣₜ, W, nᵤ,
-    Gₜ, R, Sₘ, Fₘ, iₘ, burnin)
+    _NEB_gibbs!(fₛ, sₛ, KΛₛ, invΣₛ, KΛₜ, invΣₜ, W, z, zₜ,
+    Gₜ, R, Sₘ, Fₘ, Vₘ, orders, iₘ, burnin)
   end
 
-  fₛ    = mean(Fₘ[:,burnin+1:end],2)[:]
-  sₛ    = mean(Sₘ[:,burnin+1:end],2)[:]
-  Mₜ    = cov(Fₘ[:,burnin+1:end],2,false) + fₛ*fₛ.'
-  Mₛ    = cov(Sₘ[:,burnin+1:end],2,false) + sₛ*sₛ.'
+  fₛ = mean(Fₘ[:,burnin+1:end],2)[:]
+  sₛ = mean(Sₘ[:,burnin+1:end],2)[:]
+  vₛ = mean(Vₘ[:,burnin+1:end],2)[:]
+  Cₜ = cov(Fₘ[:,burnin+1:end],2,false)
+  Cₛ = cov(Sₘ[:,burnin+1:end],2,false)
+  Cᵥ = cov(Vₘ[:,burnin+1:end],2,false)
+  Mₜ = Cₜ + fₛ*fₛ.'
+  Mₛ = Cₛ + sₛ*sₛ.'
+  Mᵥ = Cᵥ + vₛ*vₛ.'
 
   v = R*sₛ
   #V = Toeplitz(v[:],N)
@@ -168,7 +176,7 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
 
   # update Θ
   df = TwiceDifferentiableFunction(x -> Qₜ(
-    x, zₜ, zₛ[end-N+1:end], FV, V, σᵥ[end], σᵥ[end-1], N, m, nᵤ))
+    x, zₜ, zₛ[end-N+1:end], FV, V, σᵥ[end], σᵥ[end-1], N, Ts, m, nᵤ))
   options  = Optim.Options(autodiff = true, g_tol = 1e-32)
   opt = optimize(df, Θ, Newton(), options)
   Θ[:] = opt.minimizer
@@ -181,28 +189,38 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   λᵥ[end], βᵥ[end] = basicQmin(Mₜ)
 
   # update noise
-  gₜ, Gₜ = _create_G(Θ, nᵤ, m, N)
+  gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
   Xₜ     = full(Toeplitz(vcat(fₛ[:],zeros(N-n)), N))
   W[:]   = vcat(R, Gₜ*R, Xₜ*Gₜ*R)
 
-  Eᵢ = z-W*sₛ
+  #
+  Uc,ss,V = svd(Cₛ)
+  Uₛ      = R*Uc
+  Uc,st,V = svd(Cᵥ)
+  Uₜ      = R₂*Uc
+
+  Eᵢ  = z-W*sₛ
+  MM1 = R*Cₛ*R.'
   for i = 1:nᵤ
     idx    = (i-1)*N + (1:N)
     eᵢ     = view(Eᵢ,idx)
-    σᵥ[i]  = sumabs2(eᵢ)/N
+    idxM   = (i-1)*nᵣ*n + (1:nᵣ*n)
+    U,sᵢ,V = svd(Cₛ[idxM,idxM])
+    Uₘ     = R[(i-1)*N+(1:N),idxM]*U      #  MM1 = R*Cₛ*R.'
+    σᵥ[i]  = (sumabs2(eᵢ) + trace(MM1[idx,idx]))/N
   end
-  σᵥ[nᵤ+1] = sumabs2(Eᵢ[nᵤ*N+(1:N)])/N
-  σᵥ[end]  = sumabs2(Eᵢ[end-N+(1:N)])/N
+  σᵥ[nᵤ+1] = (sumabs2(Eᵢ[nᵤ*N+(1:N)]) + _quad_cost(Θ, Uₛ, ss, m, N, nᵤ))/N
+  σᵥ[end]  = (sumabs2(Eᵢ[end-N+(1:N)]) + _quad_cost(Θ, Uₜ, st, m, N, nᵤ))/N
 end
 
 function _NEB_gibbs!{T}(fₛ::AbstractVector{T}, sₛ::AbstractVector{T},
   KΛₛ::AbstractMatrix{T}, invΣₛ::AbstractMatrix{T}, KΛₜ::AbstractMatrix{T},
-  invΣₜ::AbstractMatrix{T}, W::AbstractMatrix{T}, nᵤ::Int,
-  Gₜ::AbstractMatrix{T}, R::AbstractMatrix{T}, Sₘ::AbstractMatrix{T}, Fₘ::AbstractMatrix{T},
-  iₘ::Int, burnin::Int)
-
-  N  = size(Gₜ, 2)
-  n  = size(KΛₜ,2)
+  invΣₜ::AbstractMatrix{T}, W::AbstractMatrix{T}, z::AbstractVector{T},
+  zₜ::AbstractVector{T}, Gₜ::AbstractMatrix{T}, R::AbstractMatrix{T},
+  Sₘ::AbstractMatrix{T}, Fₘ::AbstractMatrix{T}, Vₘ::AbstractMatrix{T},
+  orders::Vector{Int}, iₘ::Int, burnin::Int)
+  n,m,nᵤ,nᵣ,N = orders
+  nₛ = nᵤ*nᵣ
 
   ## sample S
   Pₛ, s = _create_Ps(KΛₛ, invΣₛ, W, z)
@@ -223,10 +241,13 @@ function _NEB_gibbs!{T}(fₛ::AbstractVector{T}, sₛ::AbstractVector{T},
   if iₘ > burnin
     Fₘ[:,iₘ-burnin] = fₛ
     Sₘ[:,iₘ-burnin] = sₛ
+    for i = 0:nₛ-1
+      Vₘ[i*(2n-1)+(1:2n-1),iₘ-burnin] = conv(fₛ,sₛ[i*n+(1:n)])
+    end
   end
 end
 
-function Qₜ(Θ, zₜ, zₛ, FV, V, σₜ, σₛ, N, m, nᵤ)
-  gₜ = _create_g(Θ, nᵤ, m, N)
+function Qₜ(Θ, zₜ, zₛ, FV, V, σₜ, σₛ, N, Ts, m, nᵤ)
+  gₜ = _create_g(Θ, nᵤ, m, Ts, N)
   return sumabs2(zₜ - FV*gₜ)/σₜ + sumabs2(zₛ - V*gₜ)/σₛ
 end

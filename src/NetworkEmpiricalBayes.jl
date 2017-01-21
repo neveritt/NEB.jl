@@ -16,7 +16,7 @@ using PDMats
 using Optim
 import ToeplitzMatrices.Toeplitz
 
-export  NEB,
+export  neb,
         nebx,
         basicEB
 
