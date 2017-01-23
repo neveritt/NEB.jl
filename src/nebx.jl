@@ -51,8 +51,10 @@ end
 #   nebx(λᵥ, βᵥ, σᵥ, sₛ, fₛ[:], Θ, z, orders)
 # end
 
-function nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
-  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int}, Ts::Float64)
+function nebx{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
+  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int}, Ts::Float64,
+  options::IdOptions{O}=IdOptions())
+  iterations = options.OptimizationOptions.iterations
   n, m, nᵤ, nᵣ, N = orders
   nₛ = nᵤ*nᵣ
 
@@ -71,7 +73,7 @@ function nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   Xₜ     = full(Toeplitz(vcat(fₛ, zeros(N-n)), N))
   W      = vcat(R, Gₜ*R, Xₜ*Gₜ*R)
   # every iteration
-  for iter in 1:20
+  for iter in 1:iterations
     println(iter)
     _iter_nebx!(λᵥ, βᵥ, σᵥ, sᵥ, fₛ, Θ, W, R, R₂, z, orders, Ts)
     state = NEBXstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ), copy(fₛ))
@@ -131,8 +133,8 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   βₜ = view(βᵥ, nₛ+1:nₛ+1)
   σₜ = view(σᵥ, nᵤ+2:nᵤ+2)
 
-  burnin = 500
-  nsteps = 1000
+  burnin = 1000
+  nsteps = 2000
   M = burnin + nsteps
 
   Sₘ = zeros(T, nₛ*n, nsteps)

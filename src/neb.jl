@@ -8,15 +8,17 @@ immutable NEBstate{T} <: IdentificationState
   s::Matrix{T}
 end
 
-function neb{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1)
+function neb{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1,
+    options::IdOptions=IdOptions())
   y  = data.y[outputidx:outputidx,:]
   u  = data.y[setdiff(1:data.ny,outputidx),:]
   r  = data.u
-  neb(y,u,r,n,m,data.Ts)
+  neb(y,u,r,n,m,data.Ts,options)
 end
 
 function neb{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
-    n::Int, m::Int, Ts::Float64)
+    n::Int, m::Int, Ts::Float64, options::IdOptions=IdOptions())
+  iterations = options.OptimizationOptions.iterations
   nᵤ = size(u,1)
   nᵣ = size(r,1)
   nₛ = nᵤ*nᵣ
@@ -26,7 +28,7 @@ function neb{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T}
 
   # save state
   NEBtrace = [NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))]
-  @inbounds for iter in 1:40
+  @inbounds for iter in 1:iterations
     _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ, Ts)
     state = NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))
     push!(NEBtrace,state)

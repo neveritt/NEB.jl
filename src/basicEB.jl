@@ -23,7 +23,7 @@ function basicEB{T}(z::AbstractArray{T},r::AbstractArray{T},
     K = λ*β.^TC
     W = R*(1/sqrt(σ))
     S = (K*(W.'*W) + eye(n))\K
-    s = S*W.'*z/sqrt(σ)
+    s = S*W.'*z/σ
     P = S + s*s.'
 
     σ   = (sumabs2(z) - 2*dot(z,R*s) + trace(R'*R*P))/N

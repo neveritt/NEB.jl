@@ -16,8 +16,8 @@ using PDMats
 using Optim
 import ToeplitzMatrices.Toeplitz
 
-export  neb,
-        nebx,
+export  neb, NEBstate,
+        nebx, NEBXstate,
         basicEB
 
 function Toeplitz{T<:Number}(g::Vector{T}, N::Int)
