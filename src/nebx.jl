@@ -74,7 +74,6 @@ function nebx{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   W      = vcat(R, Gₜ*R, Xₜ*Gₜ*R)
   # every iteration
   for iter in 1:iterations
-    println(iter)
     _iter_nebx!(λᵥ, βᵥ, σᵥ, sᵥ, fₛ, Θ, W, R, R₂, z, orders, Ts)
     state = NEBXstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ), copy(fₛ))
     push!(nebxtrace, state)
