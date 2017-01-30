@@ -52,7 +52,7 @@ end
 # end
 
 function nebx{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
-  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int}, Ts::Float64,
+  r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int}, Ts::Float64;
   options::IdOptions{O}=IdOptions())
   iterations = options.OptimizationOptions.iterations
   n, m, nᵤ, nᵣ, N = orders
@@ -87,7 +87,7 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   n, m, nᵤ, nᵣ, N = orders
   nₛ = nᵤ*nᵣ
 
-  nebtrace, zₛ = neb(y,u,r,n,m,Ts)
+  nebtrace, zₛ = neb(y,u,r,n,m,Ts; options=IdOptions(iterations=100))
   Θ  = last(nebtrace).Θ
   σₛ = last(nebtrace).σ
   λₛ = last(nebtrace).λ
@@ -133,7 +133,7 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   σₜ = view(σᵥ, nᵤ+2:nᵤ+2)
 
   burnin = 1000
-  nsteps = 2000
+  nsteps = 3000
   M = burnin + nsteps
 
   Sₘ = zeros(T, nₛ*n, nsteps)

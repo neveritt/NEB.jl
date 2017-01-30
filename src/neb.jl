@@ -8,16 +8,16 @@ immutable NEBstate{T} <: IdentificationState
   s::Matrix{T}
 end
 
-function neb{T}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1,
-    options::IdOptions=IdOptions())
+function neb{T,O}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1,
+    options::IdOptions{O}=IdOptions(iterations=100))
   y  = data.y[outputidx:outputidx,:]
   u  = data.y[setdiff(1:data.ny,outputidx),:]
   r  = data.u
-  neb(y,u,r,n,m,data.Ts,options)
+  neb(y,u,r,n,m,data.Ts,options=options)
 end
 
-function neb{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
-    n::Int, m::Int, Ts::Float64, options::IdOptions=IdOptions())
+function neb{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
+    n::Int, m::Int, Ts::Float64; options::IdOptions{O}=IdOptions(iterations=100))
   iterations = options.OptimizationOptions.iterations
   nᵤ = size(u,1)
   nᵣ = size(r,1)
@@ -150,41 +150,6 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   end
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
   gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
-
-  z  = vcat(vec(u.'),vec(y.'))
-  W  = vcat(R, Gₜ*R)
-
-  # with initial Θ, update noise and hyper parameters
-  K     = _create_K(βᵥ, n)
-  invΣₑ = spdiagm(kron(1./σᵥ,ones(T,N)))
-  Λ     = spdiagm(kron(λᵥ,ones(T,n)))
-  # warning
-  P, s  = _create_Ps(K*Λ, invΣₑ, W, z)
-  S     = P+s*s'
-  û     = R*s
-  sᵥ[:] = s
-
-  ŷ  = Gₜ*R*sᵥ[:]
-  P̂  = W*P*W'
-
-  # update λ and β
-  for i in 1:nₛ
-    idx = (i-1)*n + (1:n)
-    λᵥ[i], βᵥ[i] = basicQmin(view(S,idx,idx))
-  end
-
-  # update input noise parameters
-  for i in 1:nᵤ
-    idx = (i-1)*N + (1:N)
-    Pₜ = view(P̂, idx, idx)
-    uₜ = view(z,idx)
-    ûₜ = view(û,idx)
-    σᵥ[i] = (sumabs2(uₜ-ûₜ) + trace(Pₜ))/N
-  end
-
-  # update output noise parameters
-  Pₜ = view(P̂, nᵤ*N+(1:N), nᵤ*N+(1:N))
-  σᵥ[end] = (sumabs2(y.'-ŷ) + trace(Pₜ))/N
 
   return λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R
 end
