@@ -42,7 +42,6 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   W::AbstractMatrix{T}, R::AbstractMatrix{T}, z::AbstractVector{T}, nᵤ::Int,
   Ts::Float64)
 #  @assert eltype(R) == T throw(ArgumentError())
-  Ts = 1.0
 
   nₛ, n, m, nᵣ, N::Int = _get_problem_dims(R, Θ, λᵥ, nᵤ)
   y  = view(z, N*nᵤ+1:N*(nᵤ+1))
@@ -66,7 +65,7 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   b = _create_b(y, û, nᵤ, N)
 #  A  = _create_A(R*S*R.', N, nᵤ)
   U,sv,V = svd(S)
-  sidx = min(10,length(sv)) #length(sv) - length(filter(x-> x > 0.99*sum(sv), cumsum(sv))) + 1
+  sidx = length(sv) #min(10,length(sv)) #length(sv) - length(filter(x-> x > 0.99*sum(sv), cumsum(sv))) + 1
   sv = sv[1:sidx]
   Uᵣ = R*U[:,1:sidx]
   Vᵣ = R*V[:,1:sidx]
