@@ -1,6 +1,6 @@
 function basicEB{T}(z::AbstractArray{T},r::AbstractArray{T},
   n::Int=100, λ=100.0, β=.94, σ=0.01;
-  maxiter::Int = 100, tol::Float64=1e-10)
+  maxiter::Int = 100, rtol::Float64=1e-6)
 #  maxiter = method.maxiter
 #  tol     = method.tol
 
@@ -15,22 +15,23 @@ function basicEB{T}(z::AbstractArray{T},r::AbstractArray{T},
   s = Array(T,N)
   P = Array(T,N,N)
 
-  η = [λ; β; σ]
-  k = 1
+  η = vcat(λ, β, σ)
+  RR = R.'*R
+  Rz = R.'*z
   for k = 1:maxiter
     η₀ = η
 
     K = λ*β.^TC
-    S = (K*(R.'*R)/σ + I)\K
-    s = S*(R.'*z)/σ
+    S = (K*RR/σ + I)\K
+    s = S*Rz/σ
     P = S + s*s.'
 
-    σ   = (sumabs2(z) - 2*dot(z,R*s) + trace(R'*R*P))/N
+    σ   = (sumabs2(z) - 2*dot(Rz,s) + trace(RR*P))/N
     λ,β = basicQmin(P)
 
-    η  = [λ; β; σ]
-    if norm(η-η₀)/norm(η₀) < tol
-      break
+    η = vcat(λ, β, σ)
+    if norm(η-η₀)/norm(η₀) < rtol
+      return λ, β, σ, s
     end
   end
   return λ, β, σ, s

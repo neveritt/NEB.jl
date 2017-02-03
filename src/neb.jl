@@ -85,7 +85,7 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   # update λ and β
   for i in 1:nₛ
     idx = (i-1)*n + (1:n)
-    λᵥ[i], βᵥ[i] = basicQmin(view(S,idx,idx))
+    λᵥ[i], βᵥ[i] = basicQmin(view(S,idx,idx), 100)
   end
 
   # update input noise parameters
@@ -125,30 +125,36 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
     û[k,:] += filt(sᵥ[:,i],1,r[j,:])
   end
 
-  # initialization for OE
-  options = IdOptions(iterations = 20, autodiff=true, estimate_initial=false)
-  model   = ARX(m,m,ones(Int,nᵤ),1,nᵤ)
+  # fir
+  fir_m    = n
+  nk       = 0*ones(Int,1,nᵣ)
+  firmodel = FIR(fir_m*ones(Int,1,nᵣ), nk, 1, nᵣ)
+  options  = IdOptions(iterations = 100, autodiff=true, estimate_initial=false)
+  û  = zeros(T,nᵤ,N)
+  for k = 0:nᵤ-1
+    zdata     = IdentificationToolbox.iddata(u[k+1:k+1,:], r, Ts)
+    A,B,F,C,D,info = IdentificationToolbox.pem(zdata,firmodel,zeros(T,nᵣ*fir_m),options)
+    û[k+1:k+1,:] += filt(B,F,r)
+    σᵥ[k+1] = info.mse[1]
+  end
+
+  # initial Θ
   zdata   = iddata(y, û, Ts)
-  s       = arx(zdata,model,options)
-
-  Θ = zeros(2m*nᵤ)
-  for i in 1:nᵤ
-    Θ[(i-1)*m+(1:m)]      = coeffs(s.B[i])[2:m+1]
-    Θ[nᵤ*m+(i-1)*m+(1:m)] = coeffs(s.A[1])[2:m+1]
-  end
-
-  # OE model
+  options = IdOptions(iterations = 20, autodiff=true, estimate_initial=false)
   OEmodel = OE(m*ones(Int,1,nᵤ), m*ones(Int,1,nᵤ), ones(Int,1,nᵤ), 1, nᵤ)
-  A,B,F,C,D,info = pem(zdata, OEmodel, Θ, options)
+  Θᵢ,_    = IdentificationToolbox._morsm(zdata, OEmodel, options)
+  σᵥ[end] = IdentificationToolbox._mse(zdata, OEmodel, Θᵢ, options)[1]
 
-  σᵥ[end] = info.mse[1]
-
-  Θ = zeros(T,2m*nᵤ)
-  for i in 1:nᵤ
-    Θ[(i-1)*2m+(1:2m)] = vcat(coeffs(B[i])[2:m+1], coeffs(F[i])[2:m+1])
+  # sort Θ
+  Θ = zeros(Θᵢ)
+  for k = 0:nᵤ-1
+    Θ[2k*m+(1:m)]     = Θᵢ[k*m+(1:m)]
+    Θ[(2k+1)*m+(1:m)] = Θᵢ[nᵤ*m+k*m+(1:m)]
   end
+
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
   gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
+
   W      = vcat(R, Gₜ*R)
   z      = vcat(vec(u.'),vec(y.'))
   y      = view(z, N*nᵤ+1:N*(nᵤ+1))
@@ -169,7 +175,7 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   # update λ and β
   for i in 1:nₛ
     idx = (i-1)*n + (1:n)
-    λᵥ[i], βᵥ[i] = basicQmin(view(S,idx,idx))
+    λᵥ[i], βᵥ[i] = basicQmin(view(S,idx,idx),100)
   end
 
   # update input noise parameters

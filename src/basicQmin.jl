@@ -1,9 +1,9 @@
-function basicQmin(P, m = 100)
+function basicQmin{M<:AbstractMatrix}(P::M, m = 100)
   T = eltype(P)
   n = size(P,1)
 
-  Δ = diagm(ones(T,n)) - diagm(ones(T,n-1),1)
-  H = Δ*P*Δ'
+  Δ = I - spdiagm(ones(T,n-1), 1, n, n)
+  H = Δ*P*Δ.'
   h = diag(H)
 
   c = typemax(T)
