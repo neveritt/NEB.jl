@@ -28,14 +28,19 @@ function neb{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{
 
   # save state
   NEBtrace = [NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))]
+  η = vcat(Θ, σᵥ, λᵥ, βᵥ)
   @inbounds for iter in 1:iterations
+    ηold = η
     _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ, Ts)
     state = NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))
     push!(NEBtrace,state)
+    η = vcat(Θ, σᵥ, λᵥ, βᵥ)
+    if norm(η-ηold)/norm(η) < options.OptimizationOptions.x_tol
+      return NEBtrace, z
+    end
   end
   return NEBtrace, z
 end
-
 
 function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   σᵥ::AbstractVector{T}, sᵥ::AbstractMatrix{T}, Θ::AbstractVector{T},
@@ -54,31 +59,29 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   K     = _create_K(βᵥ, n)
   Σₑ    = spdiagm(kron(σᵥ,ones(T,N)))
   invΣₑ = spdiagm(kron(1./σᵥ,ones(T,N)))
-  Λ     = spdiagm(kron(λᵥ,ones(T,n)))
-  # warning
-  P, s  = _create_Ps(K*Λ, invΣₑ, W, z)
+  iΛ    = spdiagm(kron(1./λᵥ,ones(T,n)))
+  P, s  = _create_Ps(iΛ*inv(K), invΣₑ, W, z)
   S     = P+s*s'
   û     = R*s
   sᵥ[:] = s
 
   # θ optimimization
   b = _create_b(y, û, nᵤ, N)
-#  A  = _create_A(R*S*R.', N, nᵤ)
   U,sv,V = svd(S)
-  sidx = length(sv) #min(10,length(sv)) #length(sv) - length(filter(x-> x > 0.99*sum(sv), cumsum(sv))) + 1
+  sidx = length(sv) - length(filter(x-> x > 0.999*sum(sv), cumsum(sv))) + 1
   sv = sv[1:sidx]
   Uᵣ = R*U[:,1:sidx]
   Vᵣ = R*V[:,1:sidx]
 
-#  df = TwiceDifferentiableFunction(x -> Q₀(x, A, b, N, Ts, m, nᵤ))
   df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, sv, b, N, Ts, m, nᵤ))
-  #options  = OptimizationOptions(autodiff = true, g_tol = 1e-14)
   opt = optimize(df, Θ, Newton(), Optim.Options(autodiff = true, g_tol = 1e-14))
 
   # update hyperparameters
   Θ[:]  = opt.minimizer
   gₜ,Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
-  W  = vcat(R, Gₜ*R)
+
+  W[end-N+(1:N),:] = Gₜ*R
+
   ŷ  = Gₜ*R*sᵥ[:]
   P̂  = W*P*W'
 
@@ -194,93 +197,7 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   return λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R
 end
 
-function _create_G{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, Ts::Float64, N::Int)
-  Gₜ = zeros(T,N,N*nᵤ)
-  gₜ = zeros(T,N*nᵤ)
-  for i in 0:nᵤ-1
-    Θᵢ              = Θ[i*2m+(1:2m)]
-    gₜ[i*N+(1:N)]   = impulse(vcat(zeros(T,1),Θᵢ[1:m]), vcat(ones(T,1),Θᵢ[m+(1:m)]),Ts,N)
-    Gₜ[:,i*N+(1:N)] = Toeplitz(gₜ[i*N+(1:N)],N)
-  end
-  return gₜ, Gₜ
-end
-
-function _create_g{T}(Θ::AbstractVector{T}, nᵤ::Int, m::Int, Ts::Float64, N::Int)
-  gₜ = zeros(T,N*nᵤ)
-  for i in 0:nᵤ-1
-    Θᵢ              = Θ[i*2m+(1:2m)]
-    gₜ[i*N+(1:N)]   = impulse(vcat(zeros(T,1),Θᵢ[1:m]), vcat(ones(T,1),Θᵢ[m+(1:m)]),Ts,N)
-  end
-  gₜ
-end
-
-function _create_R{T}(r::AbstractMatrix{T}, nᵤ::Int, nᵣ::Int, nₛ::Int,
-  n::Int, N::Int)
-  # create R = [R_1...R_nr; 0 … 0;
-  #             0     ⋱    0 … 0
-  #             0  …  0   R_1 …  R_nr]
-  idxr = 1:nᵣ
-  idxu = 1:nᵤ
-  R = zeros(T, nᵤ*N, n*nₛ)
-  for  i in 0:nᵤ-1, j in 0:nᵣ-1
-    jᵣ = idxr[j+1]
-    R[i*N+(1:N), (i*nᵣ+j)n+(1:n)] = Toeplitz(hcat(r[1:N,jᵣ]),hcat(r[1,jᵣ],zeros(1,n-1)))
-  end
-  return R
-end
-
-function _get_problem_dims{T}(R::AbstractMatrix{T}, Θ::AbstractVector{T},
-  λᵥ::AbstractVector{T}, nᵤ::Int)
-  nₛ::Int = length(λᵥ)
-  n::Int  = round(size(R,2)/nₛ)
-  m::Int  = round(length(Θ)/2nᵤ)
-  nᵣ::Int = round(nₛ/nᵤ)
-  N::Int  = round(size(R,1)/nᵤ)
-  return nₛ, n, m, nᵣ, N
-end
-
-function _create_b{T}(y::AbstractVector{T}, û::AbstractVector{T}, nᵤ::Int, N::Int)
-  bᵥ = zeros(T,N*nᵤ)
-  for i = 1:nᵤ
-    idx  = (i-1)*N + (1:N)
-    bᵥ[idx] = Toeplitz(û[idx], N).'*y
-  end
-  return bᵥ
-end
-
-function _create_D{T}(::Type{T}, N::Int)
-  D  = spzeros(T,N*N,N)
-  for i in 1:N, j in i:N
-    D[(i-1)*N+j,j-i+1] = one(T)
-  end
-  return D
-end
-
-function _create_A{T}(RSRᵀ::AbstractMatrix{T}, N::Int, nu::Int=1)
-  D = _create_D(T,N)
-  return kron(speye(T,nu), D).'*kron(RSRᵀ,speye(T,N))*kron(speye(T,nu), D)
-end
-
-function _create_Ps{T}(KΛ::AbstractMatrix{T}, invΣₑ::AbstractMatrix{T},
-  W::AbstractMatrix{T}, z::AbstractVector{T})
-  P  = inv(W.'*invΣₑ*W + inv(KΛ))
-  s  = P*W'*invΣₑ*z
-  return P, s
-end
-
-function _create_K{T}(βᵥ::AbstractVector{T}, n::Int)
-  # create K = [TC_1; 0 … 0;
-  #             0     ⋱    0 … 0
-  #             0  …  0   TC_nₛ]
-  TC  = T[max(i,j) for i in 1:n, j in 1:n]
-  nₛ = length(βᵥ)
-  K  = zeros(Float64,n*nₛ,n*nₛ)
-  for i in 0:nₛ-1
-    K[i*n+(1:n), i*n+(1:n)] = βᵥ[i+1].^TC
-  end
-  return K
-end
-
+# NEB cost functions
 function Q₀{T}(Θ::AbstractVector{T}, A::AbstractMatrix{T},
   bb::AbstractVector{T}, N::Int, Ts::Float64, m::Int, nᵤ::Int)
   m::Int        = round(length(Θ)/2nᵤ)
@@ -295,24 +212,4 @@ function Qₙ{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
   sumu = _quad_cost(Θ, U, s, m, N, nᵤ)
   gₜ   = _create_g(Θ, nᵤ, m, Ts, N)
   return sumu - 2*dot(bb,gₜ)
-end
-
-function _quad_cost{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T}, s::AbstractVector{T}, m::Int, N::Int, nᵤ::Int)
-  b = Vector{Vector{T}}(nᵤ)
-  a = Vector{Vector{T}}(nᵤ)
-  for i in 0:nᵤ-1
-    Θᵢ = Θ[i*2m+(1:2m)]
-    b[i+1]  = vcat(zeros(T,1), Θᵢ[1:m])
-    a[i+1]  = vcat(ones(T,1), Θᵢ[m+(1:m)])
-  end
-  sum = zero(T)
-  for i in 1:length(s)
-    vj = zeros(T,N)
-    for j in 1:nᵤ
-      idxj = (j-1)*N+(1:N)
-      vj += filt(b[j], a[j], U[idxj,i])
-    end
-    sum += s[i]*sumabs2(vj)
-  end
-  return sum
 end

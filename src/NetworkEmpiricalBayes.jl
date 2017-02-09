@@ -20,15 +20,10 @@ export  neb, NEBstate,
         nebx, NEBXstate,
         basicEB
 
-function Toeplitz{T<:Number}(g::Vector{T}, N::Int)
-  col = zeros(T,1,N)
-  col[1] = g[1]
-  Toeplitz(reshape(g,length(g),1), col)
-end
-
 typealias IdDataObject IdentificationToolbox.IdDataObject
 
 # include files
+include("utils.jl")
 include("basicEB.jl")
 include("basicQmin.jl")
 include("impulse.jl")
