@@ -241,8 +241,7 @@ function _NEB_gibbs!{T}(fₛ::AbstractVector{T}, sₛ::AbstractVector{T},
   sₛ[:]    = rand(Ssampler,1)
 
   ## sample T
-  Sₜ    = full(Toeplitz(R*sₛ[:], n))
-  Wₜ    = Gₜ*Sₜ
+  Wₜ    = full(Toeplitz(Gₜ*R*sₛ[:], n))
   Pₜ, f = _create_Ps(iKΛₜ, invΣₜ, Wₜ, zₜ)
   Covₜ  = PDMat(cholfact(Hermitian(Pₜ)))
 
