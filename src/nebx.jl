@@ -199,7 +199,7 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   bₛ = _create_b(y, v, nᵤ, N)/σᵥ[end-1]
 
   # update Θ
-  df = TwiceDifferentiableFunction(x -> Qₙ(
+  df = TwiceDifferentiable(x -> Qₙ(
       x, bₜ, bₛ, σᵥ[end], σᵥ[end-1], Uₜ, st, Uₛ, ss, N, Ts, m, nᵤ))
   options  = Optim.Options(autodiff = true, g_tol = 1e-32)
   opt = optimize(df, Θ, Newton(), options)

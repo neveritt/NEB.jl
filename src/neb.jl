@@ -73,7 +73,7 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   Uᵣ = R*U[:,1:sidx]
   Vᵣ = R*V[:,1:sidx]
 
-  df = TwiceDifferentiableFunction(x -> Qₙ(x, Uᵣ, sv, b, N, Ts, m, nᵤ))
+  df = TwiceDifferentiable(x -> Qₙ(x, Uᵣ, sv, b, N, Ts, m, nᵤ))
   opt = optimize(df, Θ, Newton(), Optim.Options(autodiff = true, g_tol = 1e-14))
 
   # update hyperparameters
