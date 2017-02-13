@@ -100,7 +100,7 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   n, m, nᵤ, nᵣ, N = orders
   nₛ = nᵤ*nᵣ
 
-  nebtrace, zₛ = neb(y,u,r,n,m,Ts; options=IdOptions(iterations=50))
+  nebtrace, zₛ = neb(y,u,r,n,m,Ts; options=IdOptions(iterations=100))
   Θ  = last(nebtrace).Θ
   σₛ = last(nebtrace).σ
   λₛ = last(nebtrace).λ
@@ -115,9 +115,18 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
 
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
   gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
-  û      = Gₜ*R*sₛ[:]
+  û      = reshape(Gₜ*R*sₛ[:],1,N)
 
-  λₜ, βₜ, σₜ, fₛ = basicEB(zₜ[:], û, n, λₜ, βₜ, σₜ)
+  λₜ, βₜ, σₜ, fₛ = basicEB(zₜ[:], û[:], n, λₜ, βₜ, σₜ)
+
+  fir_m    = n
+  nk       = 0*ones(Int,1,1)
+  firmodel = FIR(fir_m*ones(Int,1,1), nk, 1, 1)
+  options  = IdOptions(iterations = 100, autodiff=true, estimate_initial=false)
+
+  zdata     = IdentificationToolbox.iddata(zₜ, û, Ts)
+  A,B,F,C,D,info = IdentificationToolbox.pem(zdata,firmodel,zeros(T,fir_m),options)
+  σₜ = info.mse[1]
 
   λᵥ = vcat(λₛ,[λₜ])
   βᵥ = vcat(βₛ,[βₜ])

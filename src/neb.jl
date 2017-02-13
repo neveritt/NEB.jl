@@ -165,9 +165,8 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   K     = _create_K(βᵥ, n)
   Σₑ    = spdiagm(kron(σᵥ,ones(T,N)))
   invΣₑ = spdiagm(kron(1./σᵥ,ones(T,N)))
-  Λ     = spdiagm(kron(λᵥ,ones(T,n)))
-  # warning
-  P, s  = _create_Ps(K*Λ, invΣₑ, W, z)
+  iΛ    = spdiagm(kron(1./λᵥ,ones(T,n)))
+  P, s  = _create_Ps(iΛ*inv(K), invΣₑ, W, z)
   S     = P+s*s'
   û     = R*s
   sᵥ[:] = s
