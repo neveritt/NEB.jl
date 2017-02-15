@@ -7,50 +7,6 @@ immutable NEBXstate{T} <: IdentificationState
   f::Vector{T}
 end
 
-
-# function nebx{T}(y::AbstractVector{T}, u::AbstractMatrix{T},
-#   r::AbstractMatrix{T}, n::Int, m::Int, zₜ::AbstractVector{T})
-#
-#   λₛ, βₛ, σₛ, sₛ, Θ, zₛ = NEB(y,u,r,n,m)
-#   nᵤ = size(u,2)
-#   nᵣ = size(r,2)
-#   N  = size(r,1)
-#   nebx(λₛ, βₛ, σₛ, sₛ, Θ, zₛ, zₜ, n, m, nᵤ, nᵣ, N)
-#
-#
-#   λₛ, βₛ, σₛ, sₛ, Θ, zₛ = NEB(y,u,r,n,m)
-#
-#
-#   z  = vcat(vec(u.'),vec(y.'))
-#   W  = vcat(R, Gₜ*R)
-#
-#   # save state
-#   NEBXtrace = [NEBXstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))]
-#   @inbounds for iter in 1:10
-#     # println("iter", iter)
-#     # println("Θ: ", Θ)
-#     # println("σᵥ: ", σᵥ)
-#     # println("λᵥ: ", λᵥ)
-#     # println("βᵥ: ", βᵥ)
-#     _iter_NEBX!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ)
-#     state = NEBXstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))
-#     push!(NEBXtrace,state)
-#   end
-#   return NEBXtrace, z
-#
-# end
-#
-#
-# function nebx{T}(λₛ::AbstractVector{T}, βₛ::AbstractVector{T},
-#   σₛ::AbstractVector{T}, sₛ::AbstractVector{T}, Θ::AbstractVector{T},
-#   zₛ::AbstractVector{T}, zₜ::AbstractVector{T},
-#   n::Int, m::Int, nᵤ::Int, nᵣ::Int, N::Int)
-#
-#   λᵥ, βᵥ, σᵥ, sᵥ, fₛ, Θ, W, R, z = _initial_nebx(y,u,r,zₜ,n,m)
-#
-#   nebx(λᵥ, βᵥ, σᵥ, sₛ, fₛ[:], Θ, z, orders)
-# end
-
 function nebx{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   r::AbstractMatrix{T}, zₜ::AbstractMatrix{T}, orders::Vector{Int}, Ts::Float64;
   options::IdOptions{O}=IdOptions())
@@ -109,16 +65,12 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
 
   nₛ = nᵤ*nᵣ
   z  = vcat(zₛ[:],zₜ[:])
-  σₜ = 0.01
-  λₜ = 100.0
-  βₜ = 0.94
 
   R      = _create_R(r.', nᵤ, nᵣ, nₛ, n, N)
   gₜ, Gₜ = _create_G(Θ, nᵤ, m, Ts, N)
   û      = reshape(Gₜ*R*sₛ[:],1,N)
 
-  λₜ, βₜ, σₜ, fₛ = basicEB(zₜ[:], û[:], n, λₜ, βₜ, σₜ)
-
+  # use FIR to get initial estimate of noise
   fir_m    = n
   nk       = 0*ones(Int,1,1)
   firmodel = FIR(fir_m*ones(Int,1,1), nk, 1, 1)
@@ -127,6 +79,25 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   zdata     = IdentificationToolbox.iddata(zₜ, û, Ts)
   A,B,F,C,D,info = IdentificationToolbox.pem(zdata,firmodel,zeros(T,fir_m),options)
   σₜ = info.mse[1]
+
+  # use a very high initial estimate of λₜ and "slow" decay βₜ
+  λₜ = 100.0
+  βₜ = 0.94
+  fₛ = zeros(T,n)
+  for k in 1:100
+    Kₜ    = _create_K([βₜ], n)
+    Λₜ    = spdiagm(kron([λₜ],ones(T,n)))
+    iKΛₜ  = inv(Kₜ*Λₜ)
+    invΣₜ = spdiagm(kron(1./σₜ,ones(T,N)))
+    Wₜ    = full(Toeplitz(Gₜ*R*sₛ[:], n))
+    Pₜ, fₛ = _create_Ps(iKΛₜ, invΣₜ, Wₜ, zₜ[1,:])
+
+    λₜ, βₜ = basicQmin(Pₜ+fₛ*fₛ.')
+
+    # update noise
+    Eₜ  = zₜ[:]-Wₜ*fₛ
+    σₜ  = (sumabs2(Eₜ) + trace(Wₜ*Pₜ*Wₜ.'))/N
+  end
 
   λᵥ = vcat(λₛ,[λₜ])
   βᵥ = vcat(βₛ,[βₜ])
@@ -182,13 +153,25 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   Mₛ = Cₛ + sₛ*sₛ.'
   Mᵥ = Cᵥ + vₛ*vₛ.'
 
-  v = R*sₛ
-  V = zeros(T,N,nᵤ*N)
-  for i = 1:nᵤ
-    V[:,(i-1)*N+(1:N)] = Toeplitz(v[(i-1)*N+(1:N)],N)
-  end
-  F = full(Toeplitz(vcat(fₛ[:],zeros(N-n)),N))
-  FV = F*V
+  # v = R*sₛ
+  # V = zeros(T,N,nᵤ*N)
+  # for i = 1:nᵤ
+  #   V[:,(i-1)*N+(1:N)] = Toeplitz(v[(i-1)*N+(1:N)],N)
+  # end
+  #
+  # FV = zeros(T,N,nᵤ*N)
+  # fv = R₂*vₛ
+  # for i = 1:nᵤ
+  #   FV[:,(i-1)*N+(1:N)] = Toeplitz(fv[(i-1)*N+(1:N)],N)
+  # end
+
+  #  Uc,st,Vc = svd(Cᵥ)
+  #  Uₜ       = R₂*Uc
+  #  Uc,ss,Vc = svd(Cₛ)
+  #  Uₛ       = R*Uc
+
+  #df = TwiceDifferentiable(x -> Qₜ(
+  #        x, zₜ, y, FV, V, σᵥ[end], σᵥ[end-1], Uₜ, st, Uₛ, ss, N, Ts, m, nᵤ))
 
   Uc,st,Vc = svd(Mᵥ)
   Uₜ       = R₂*Uc
@@ -198,9 +181,10 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   bₜ = _create_b(zₜ, R₂*vₛ, nᵤ, N)/σᵥ[end]
   bₛ = _create_b(y, v, nᵤ, N)/σᵥ[end-1]
 
-  # update Θ
   df = TwiceDifferentiable(x -> Qₙ(
       x, bₜ, bₛ, σᵥ[end], σᵥ[end-1], Uₜ, st, Uₛ, ss, N, Ts, m, nᵤ))
+
+  # update Θ
   options  = Optim.Options(autodiff = true, g_tol = 1e-32)
   opt = optimize(df, Θ, Newton(), options)
   Θ[:] = opt.minimizer
