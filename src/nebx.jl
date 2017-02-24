@@ -153,7 +153,7 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   Mₛ = Cₛ + sₛ*sₛ.'
   Mᵥ = Cᵥ + vₛ*vₛ.'
 
-  # v = R*sₛ
+  v = R*sₛ
   # V = zeros(T,N,nᵤ*N)
   # for i = 1:nᵤ
   #   V[:,(i-1)*N+(1:N)] = Toeplitz(v[(i-1)*N+(1:N)],N)
