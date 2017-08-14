@@ -1,50 +1,50 @@
-@compat abstract type IdentificationState end
-
-immutable NEBstate{T} <: IdentificationState
+immutable NEBSstate{T} <: IdentificationState
   Θ::Vector{T}
   σ::Vector{T}
   λ::Vector{T}
   β::Vector{T}
+  ρ::Vector{T}
   s::Matrix{T}
 end
 
-function neb{T,O}(data::IdDataObject{T}, n::Int, m::Int; outputidx::Int=1,
+function nebs{T,O}(data::IdDataObject{T}, n::Int, m::Int, ρ; outputidx::Int=1,
     options::IdOptions{O}=IdOptions(iterations=100))
   y  = data.y[outputidx:outputidx,:]
   u  = data.y[setdiff(1:data.ny,outputidx),:]
   r  = data.u
-  neb(y,u,r,n,m,data.Ts,options=options)
+  nebs(y,u,r,n,m,ρ,data.Ts,options=options)
 end
 
-function neb{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
-    n::Int, m::Int, Ts::Float64; options::IdOptions{O}=IdOptions(iterations=100))
+function nebs{T,O}(y::AbstractMatrix{T}, u::AbstractMatrix{T}, r::AbstractMatrix{T},
+    n::Int, m::Int, ρ::T, Ts::Float64; options::IdOptions{O}=IdOptions(iterations=100))
   iterations = options.OptimizationOptions.iterations
-  xtol = options.OptimizationOptions.x_tol
   nᵤ = size(u,1)
   nᵣ = size(r,1)
   nₛ = nᵤ*nᵣ
-  λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R = _initial_NEB(y,u,r,n,m,Ts)
+  λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R = _initial_NEBS(y,u,r,n,m,Ts)
   z  = vcat(vec(u.'),vec(y.'))
   W  = vcat(R, Gₜ*R)
 
   # save state
-  NEBtrace = [NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))]
-  η = vcat(Θ, σᵥ, λᵥ, βᵥ)
+  ρᵥ = [ρ]
+  NEBStrace = [NEBSstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(ρᵥ), copy(sᵥ))]
+  η = vcat(Θ, σᵥ, λᵥ, βᵥ, ρᵥ)
   @inbounds for iter in 1:iterations
     ηold = η
-    _iter_NEB!(λᵥ, βᵥ, σᵥ, sᵥ, Θ, W, R, z, nᵤ, Ts)
-    state = NEBstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(sᵥ))
-    push!(NEBtrace,state)
-    η = vcat(Θ, σᵥ, λᵥ, βᵥ)
-    if norm(η-ηold)/norm(η) < xtol
-      return NEBtrace, z
+    _iter_NEBS!(λᵥ, βᵥ, σᵥ, ρ, sᵥ, Θ, W, R, z, nᵤ, Ts)
+    state = NEBSstate(copy(Θ), copy(σᵥ), copy(λᵥ), copy(βᵥ), copy(ρᵥ), copy(sᵥ))
+    push!(NEBStrace,state)
+    η = vcat(Θ, σᵥ, λᵥ, βᵥ, ρᵥ)
+    if norm(η-ηold)/norm(η) < options.OptimizationOptions.x_tol
+      return NEBStrace, z
     end
   end
-  return NEBtrace, z
+  return NEBStrace, z
 end
 
-function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
-  σᵥ::AbstractVector{T}, sᵥ::AbstractMatrix{T}, Θ::AbstractVector{T},
+function _iter_NEBS!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
+  σᵥ::AbstractVector{T}, ρ::T, sᵥ::AbstractMatrix{T},
+  Θ::AbstractVector{T},
   W::AbstractMatrix{T}, R::AbstractMatrix{T}, z::AbstractVector{T}, nᵤ::Int,
   Ts::Float64)
 #  @assert eltype(R) == T throw(ArgumentError())
@@ -60,6 +60,10 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   K     = _create_K(βᵥ, n)
   Σₑ    = spdiagm(kron(σᵥ,ones(T,N)))
   invΣₑ = spdiagm(kron(1./σᵥ,ones(T,N)))
+  λtol  = 1e-6
+  for i in eachindex(λᵥ)
+    λᵥ[i] = λᵥ[i] > λtol ? λᵥ[i] : λtol
+  end
   iΛ    = spdiagm(kron(1./λᵥ,ones(T,n)))
   P, s  = _create_Ps(iΛ*inv(K), invΣₑ, W, z)
   S     = P+s*s'
@@ -86,10 +90,11 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   ŷ  = Gₜ*R*sᵥ[:]
   P̂  = W*P*W'
 
-  # update λ and β
+  # update λ, β and ρ
+  #ρᵥ[1] = 1/sum(λᵥ)
   for i in 1:nₛ
     idx = (i-1)*n + (1:n)
-    λᵥ[i], βᵥ[i] = basicQmin(view(S,idx,idx), 100)
+    λᵥ[i], βᵥ[i] = expQmin(view(S,idx,idx), ρ, 100)
   end
 
   # update input noise parameters
@@ -108,10 +113,10 @@ function _iter_NEB!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   return nothing
 end
 
-function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
+function _initial_NEBS{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   r::AbstractMatrix{T}, n::Int, m::Int, Ts::Float64)
-  size(y,1) == 1 || throw(ArgumentError("_initial_NEB: only one output allowed"))
-  size(y,2) == size(u,2) == size(r,2) || throw(ArgumentError("_initial_NEB: Data length must be the same"))
+  size(y,1) == 1 || throw(ArgumentError("_initial_NEBS: only one output allowed"))
+  size(y,2) == size(u,2) == size(r,2) || throw(ArgumentError("_initial_NEBS: Data length must be the same"))
   nᵤ,N = size(u)
   nᵣ   = size(r,1)
   nₛ   = nᵤ*nᵣ
@@ -197,7 +202,7 @@ function _initial_NEB{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   return λᵥ, βᵥ, σᵥ, sᵥ, Θ, gₜ, Gₜ, R
 end
 
-# NEB cost functions
+# NEBS cost functions
 function Q₀{T}(Θ::AbstractVector{T}, A::AbstractMatrix{T},
   bb::AbstractVector{T}, N::Int, Ts::Float64, m::Int, nᵤ::Int)
   m::Int        = round(length(Θ)/2nᵤ)

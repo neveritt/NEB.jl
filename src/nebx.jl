@@ -56,7 +56,7 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   n, m, nᵤ, nᵣ, N = orders
   nₛ = nᵤ*nᵣ
 
-  nebtrace, zₛ = neb(y,u,r,n,m,Ts; options=IdOptions(iterations=100))
+  nebtrace, zₛ = neb(y,u,r,n,m,Ts; options=IdOptions(iterations=10))
   Θ  = last(nebtrace).Θ
   σₛ = last(nebtrace).σ
   λₛ = last(nebtrace).λ
@@ -74,7 +74,7 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
   fir_m    = n
   nk       = 0*ones(Int,1,1)
   firmodel = FIR(fir_m*ones(Int,1,1), nk, 1, 1)
-  options  = IdOptions(iterations = 100, autodiff=true, estimate_initial=false)
+  options  = IdOptions(iterations = 100, estimate_initial=false)
 
   zdata     = IdentificationToolbox.iddata(zₜ, û, Ts)
   A,B,F,C,D,info = IdentificationToolbox.pem(zdata,firmodel,zeros(T,fir_m),options)
@@ -96,7 +96,7 @@ function _initial_nebx{T}(y::AbstractMatrix{T}, u::AbstractMatrix{T},
 
     # update noise
     Eₜ  = zₜ[:]-Wₜ*fₛ
-    σₜ  = (sumabs2(Eₜ) + trace(Wₜ*Pₜ*Wₜ.'))/N
+    σₜ  = (sum(abs2, Eₜ) + trace(Wₜ*Pₜ*Wₜ.'))/N
   end
 
   λᵥ = vcat(λₛ,[λₜ])
@@ -185,7 +185,7 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
       x, bₜ, bₛ, σᵥ[end], σᵥ[end-1], Uₜ, st, Uₛ, ss, N, Ts, m, nᵤ))
 
   # update Θ
-  options  = Optim.Options(autodiff = true, g_tol = 1e-32)
+  options  = Optim.Options(g_tol = 1e-32)
   opt = optimize(df, Θ, Newton(), options)
   Θ[:] = opt.minimizer
 
@@ -211,10 +211,10 @@ function _iter_nebx!{T}(λᵥ::AbstractVector{T}, βᵥ::AbstractVector{T},
   for i = 1:nᵤ
     idx   = (i-1)*N + (1:N)
     eᵢ    = view(Eᵢ,idx)
-    σᵥ[i] = (sumabs2(eᵢ) + trace(view(MM1,idx,idx)))/N
+    σᵥ[i] = (sum(abs2, eᵢ) + trace(view(MM1,idx,idx)))/N
   end
-  σᵥ[nᵤ+1] = (sumabs2(Eᵢ[nᵤ*N+(1:N)]) + _quad_cost(Θ, Uₛ, ss, m, N, nᵤ))/N
-  σᵥ[end]  = (sumabs2(Eᵢ[end-N+(1:N)]) + _quad_cost(Θ, Uₜ, st, m, N, nᵤ))/N
+  σᵥ[nᵤ+1] = (sum(abs2, Eᵢ[nᵤ*N+(1:N)]) + _quad_cost(Θ, Uₛ, ss, m, N, nᵤ))/N
+  σᵥ[end]  = (sum(abs2, Eᵢ[end-N+(1:N)]) + _quad_cost(Θ, Uₜ, st, m, N, nᵤ))/N
 end
 
 function _NEB_gibbs!{T}(fₛ::AbstractVector{T}, sₛ::AbstractVector{T},
@@ -268,6 +268,6 @@ function Qₜ(Θ, zₜ, zₛ, FV, V, σₜ, σₛ, Uₜ, sₜ, Uₛ, sₛ, N, Ts
   sumt = _quad_cost(Θ, Uₜ, sₜ, m, N, nᵤ)
   sums = _quad_cost(Θ, Uₛ, sₛ, m, N, nᵤ)
 
-  return sumabs2(zₜ - FV*gₜ)/σₜ + sumabs2(zₛ - V*gₜ)/σₛ +
+  return sum(abs2, zₜ - FV*gₜ)/σₜ + sum(abs2, zₛ - V*gₜ)/σₛ +
     sumt/σₜ + sums/σₛ
 end

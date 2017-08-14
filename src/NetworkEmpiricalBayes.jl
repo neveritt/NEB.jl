@@ -7,7 +7,7 @@ module NetworkEmpiricalBayes
 # export function2
 
 # Polynomials package is needed
-using ControlCore
+using SystemsBase
 using IdentificationToolbox, Compat
 using GeneralizedSchurAlgorithm
 using Polynomials
@@ -20,7 +20,7 @@ export  neb, NEBstate,
         nebx, NEBXstate,
         basicEB
 
-typealias IdDataObject IdentificationToolbox.IdDataObject
+const IdDataObject = IdentificationToolbox.IdDataObject
 
 # include files
 include("utils.jl")
@@ -29,5 +29,6 @@ include("basicQmin.jl")
 include("impulse.jl")
 include("neb.jl")
 include("nebx.jl")
+include("nebs.jl")
 
 end # module

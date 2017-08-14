@@ -91,11 +91,11 @@ function _create_K{T}(βᵥ::AbstractVector{T}, n::Int)
 end
 
 function _quad_cost{T}(U::AbstractMatrix{T}, s::AbstractVector{T})
-  sum = zero(T)
+  sumc = zero(T)
   for i in 1:length(s)
-    sum += s[i]*sumabs2(U[:,i])
+    sumc += s[i]*sum(abs2,U[:,i])
   end
-  return sum
+  return sumc
 end
 
 function _quad_cost{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
@@ -107,14 +107,14 @@ function _quad_cost{T}(Θ::AbstractVector{T}, U::AbstractMatrix{T},
     b[i+1]  = vcat(zeros(T,1), Θᵢ[1:m])
     a[i+1]  = vcat(ones(T,1), Θᵢ[m+(1:m)])
   end
-  sum = zero(T)
+  sumc = zero(T)
   for i in 1:length(s)
     vj = zeros(T,N)
     for j in 1:nᵤ
       idxj = (j-1)*N+(1:N)
       vj += filt(b[j], a[j], U[idxj,i])
     end
-    sum += s[i]*sumabs2(vj)
+    sumc += s[i]*sum(abs2, vj)
   end
-  return sum
+  return sumc
 end
